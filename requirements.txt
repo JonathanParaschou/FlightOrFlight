@@ -1,0 +1,6 @@
+playwright
+pandas
+python-dotenv
+mysql-connector-python
+fastapi
+uvicorn

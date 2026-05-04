@@ -1,0 +1,27 @@
+{
+  "name": "flight-scanner-web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start --port 3000"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "lucide-react": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-chartjs-2": "^5.3.1",
+    "react-dom": "latest",
+    "recharts": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "tailwindcss": "latest",
+    "typescript": "latest"
+  }
+}

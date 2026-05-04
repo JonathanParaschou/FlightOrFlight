@@ -1,0 +1,8 @@
+.env
+__pycache__/
+venv/
+web/node_modules/
+web/.next/
+web/.env.local
+flight_scanner_debug/
+flight_prices.db
