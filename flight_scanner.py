@@ -22,7 +22,6 @@ class Config:
     trip_length_days: int = 4
     adults: int = 1
 
-    output_csv: str = "flight_price_observations.csv"
     debug_dir: str = "flight_scanner_debug"
 
     headless: bool = True
@@ -510,17 +509,6 @@ def fill_form_and_search(page, config: Config, depart_date: date, return_date: d
 
     page.wait_for_timeout(500)
 
-
-def append_csv_backup(output_csv: str, row: dict):
-    df = pd.DataFrame([row])
-    path = Path(output_csv)
-
-    if path.exists():
-        df.to_csv(path, mode="a", header=False, index=False)
-    else:
-        df.to_csv(path, index=False)
-
-
 def build_row(
     config: Config,
     scan_id: str,
@@ -620,7 +608,6 @@ def scan_one_window(config: Config, scan_id: str, depart_date: date, return_date
 
 def persist_result(config: Config, row: dict):
     save_flight_price(row)
-    append_csv_backup(config.output_csv, row)
 
 
 def scan_year(config: Config):
@@ -645,7 +632,6 @@ def scan_year(config: Config):
     print(f"Adults: {config.adults}")
     print(f"Headless: {config.headless}")
     print(f"Workers: {config.max_workers}")
-    print(f"CSV backup: {config.output_csv}")
 
     if config.max_workers <= 1:
         for idx, (depart_date, return_date) in enumerate(windows, start=1):
@@ -717,7 +703,6 @@ if __name__ == "__main__":
         trip_length_days=4,
         adults=1,
 
-        output_csv="flight_price_observations.csv",
         debug_dir="flight_scanner_debug",
 
         headless=True,

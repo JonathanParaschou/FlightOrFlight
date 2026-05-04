@@ -20,15 +20,12 @@ import {
   BarChart3,
   CalendarDays,
   ChevronDown,
-  Clock,
-  Database,
   Plane,
   RefreshCw,
   Search,
   SlidersHorizontal,
   Sparkles,
   TrendingDown,
-  TrendingUp,
   Wallet,
 } from 'lucide-react';
 
@@ -85,6 +82,15 @@ type ChartMetric = 'min' | 'avg' | 'median' | 'max';
 type GroupByMode = 'month' | 'weekday';
 type SortMode = 'price' | 'date' | 'savings';
 type ViewMode = 'cards' | 'table';
+type TimelineLabelMode = 'short' | 'monthDay' | 'full' | 'iso';
+type ScanStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'rejected'
+  | 'not_found'
+  | null;
 
 const API_BASE = 'http://127.0.0.1:8000';
 
@@ -101,6 +107,10 @@ const chartColors = {
   grid: 'rgba(148, 163, 184, 0.12)',
   text: 'rgba(226, 232, 240, 0.85)',
 };
+
+function getCurrentYear() {
+  return new Date().getFullYear();
+}
 
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -125,6 +135,35 @@ function formatLongDate(value: string | null | undefined) {
     day: 'numeric',
     year: 'numeric',
   });
+}
+
+function formatTimelineLabel(value: string, mode: TimelineLabelMode) {
+  const date = new Date(`${value}T00:00:00`);
+
+  if (mode === 'short') {
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
+
+  if (mode === 'monthDay') {
+    return date.toLocaleDateString(undefined, {
+      month: 'long',
+      day: 'numeric',
+    });
+  }
+
+  if (mode === 'full') {
+    return date.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  }
+
+  return value;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -212,7 +251,7 @@ function chartOptions(yLabel = 'Price') {
           color: chartColors.text,
           maxRotation: 0,
           autoSkip: true,
-          maxTicksLimit: 10,
+          maxTicksLimit: 12,
         },
         grid: {
           color: 'transparent',
@@ -250,9 +289,21 @@ export default function Home() {
   const [chartMetric, setChartMetric] = useState<ChartMetric>('min');
   const [groupByMode, setGroupByMode] = useState<GroupByMode>('month');
   const [maxChartPoints, setMaxChartPoints] = useState(365);
+  const [timelineLabelMode, setTimelineLabelMode] =
+    useState<TimelineLabelMode>('full');
   const [priceCap, setPriceCap] = useState<number>(0);
   const [sortMode, setSortMode] = useState<SortMode>('price');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
+
+  const [scanYear, setScanYear] = useState(getCurrentYear());
+  const [scanMaxWindows, setScanMaxWindows] = useState(365);
+  const [scanMaxWorkers, setScanMaxWorkers] = useState(2);
+  const [scanHeadless, setScanHeadless] = useState(true);
+  const [scanSlowMo, setScanSlowMo] = useState(0);
+  const [scanStatus, setScanStatus] = useState<ScanStatus>(null);
+  const [activeScanId, setActiveScanId] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
 
   async function loadData() {
     setLoading(true);
@@ -295,10 +346,119 @@ export default function Home() {
     }
   }
 
+  async function startScan() {
+    setScanLoading(true);
+    setScanError(null);
+    setScanStatus('queued');
+
+    const destinationCode = destination.trim().toUpperCase();
+    const originCode = origin.trim().toUpperCase();
+
+    try {
+      const response = await fetch(`${API_BASE}/scan/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          origin_code: originCode,
+          origin_text:
+            originCode === 'MSP' ? 'Minneapolis' : originCode,
+
+          destination_code: destinationCode,
+          destination_select_text:
+            destinationCode === 'HNL'
+              ? 'Honolulu HNL'
+              : destinationCode,
+
+          year: scanYear,
+          trip_length_days: tripLengthDays,
+          adults,
+
+          max_windows: scanMaxWindows > 0 ? scanMaxWindows : null,
+          max_workers: scanMaxWorkers,
+
+          headless: scanHeadless,
+          slow_mo: scanSlowMo,
+
+          min_valid_price: 100,
+          max_valid_price: 6000,
+
+          debug_dir: 'flight_scanner_debug',
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Could not start scanner.');
+      }
+
+      const job = await response.json();
+
+      if (job.status === 'rejected') {
+        setScanStatus('rejected');
+        setScanError(job.error ?? 'A scan is already running.');
+        return;
+      }
+
+      setActiveScanId(job.scan_id);
+      setScanStatus(job.status ?? 'queued');
+    } catch (error) {
+      console.error(error);
+      setScanError('Could not start the scanner. Check the FastAPI server logs.');
+      setScanStatus('failed');
+    } finally {
+      setScanLoading(false);
+    }
+  }
+
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!activeScanId) return;
+
+    const interval = window.setInterval(async () => {
+      try {
+        const response = await fetch(`${API_BASE}/scan/status/${activeScanId}`);
+
+        if (!response.ok) {
+          throw new Error('Could not fetch scan status.');
+        }
+
+        const job = await response.json();
+        setScanStatus(job.status);
+
+        if (job.status === 'completed') {
+          window.clearInterval(interval);
+          setActiveScanId(null);
+          await loadData();
+        }
+
+        if (job.status === 'failed') {
+          window.clearInterval(interval);
+          setActiveScanId(null);
+          setScanError(job.error ?? 'Scanner failed.');
+        }
+
+        if (job.status === 'not_found') {
+          window.clearInterval(interval);
+          setActiveScanId(null);
+          setScanError('Could not find the active scanner job.');
+        }
+      } catch (error) {
+        console.error(error);
+        window.clearInterval(interval);
+        setActiveScanId(null);
+        setScanStatus('failed');
+        setScanError('Lost connection while checking scanner status.');
+      }
+    }, 3000);
+
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeScanId]);
 
   const validPrices = useMemo(() => {
     return prices
@@ -330,8 +490,12 @@ export default function Home() {
     const std = standardDeviation(priceValues);
     const spread = min !== null && max !== null ? max - min : null;
 
+    const volatilityDeal = avg !== null ? avg - 0.5 * std : null;
+
     const dealThreshold =
-      p25 !== null ? p25 : avg !== null ? avg * 0.9 : null;
+      p25 !== null && volatilityDeal !== null
+        ? Math.min(p25, volatilityDeal)
+        : p25 ?? volatilityDeal;
 
     const dealCount =
       dealThreshold === null
@@ -359,7 +523,10 @@ export default function Home() {
   const bestWindow = useMemo(() => {
     return cheapest
       .filter((row) => row.cheapest_price_usd !== null)
-      .sort((a, b) => (a.cheapest_price_usd ?? 0) - (b.cheapest_price_usd ?? 0))[0];
+      .sort(
+        (a, b) =>
+          (a.cheapest_price_usd ?? 0) - (b.cheapest_price_usd ?? 0)
+      )[0];
   }, [cheapest]);
 
   const worstWindow = useMemo(() => {
@@ -369,7 +536,11 @@ export default function Home() {
   }, [validPrices]);
 
   const consumerAdvice = useMemo(() => {
-    if (!bestWindow || analytics.avg === null || bestWindow.cheapest_price_usd === null) {
+    if (
+      !bestWindow ||
+      analytics.avg === null ||
+      bestWindow.cheapest_price_usd === null
+    ) {
       return {
         headline: 'Not enough data yet',
         detail: 'Run more scans to compare windows and identify real deals.',
@@ -393,7 +564,9 @@ export default function Home() {
     if (savingsPct >= 10) {
       return {
         headline: 'Decent price window',
-        detail: `${formatLongDate(bestWindow.depart_date)} is about ${savingsPct}% below average.`,
+        detail: `${formatLongDate(
+          bestWindow.depart_date
+        )} is about ${savingsPct}% below average.`,
         tone: 'good' as const,
       };
     }
@@ -437,7 +610,8 @@ export default function Home() {
         sortIndex: item.sortIndex,
         min: Math.min(...item.prices),
         avg: Math.round(
-          item.prices.reduce((sum, value) => sum + value, 0) / item.prices.length
+          item.prices.reduce((sum, value) => sum + value, 0) /
+            item.prices.length
         ),
         median: Math.round(median(item.prices) ?? 0),
         max: Math.max(...item.prices),
@@ -484,7 +658,8 @@ export default function Home() {
         sortIndex: item.sortIndex,
         min: Math.min(...item.prices),
         avg: Math.round(
-          item.prices.reduce((sum, value) => sum + value, 0) / item.prices.length
+          item.prices.reduce((sum, value) => sum + value, 0) /
+            item.prices.length
         ),
         median: Math.round(median(item.prices) ?? 0),
         max: Math.max(...item.prices),
@@ -495,12 +670,12 @@ export default function Home() {
 
   const priceTimeline = useMemo(() => {
     return validPrices.slice(0, maxChartPoints).map((row) => ({
-      label: formatDate(row.depart_date),
+      label: formatTimelineLabel(row.depart_date, timelineLabelMode),
       price: row.cheapest_price_usd,
       departDate: row.depart_date,
       returnDate: row.return_date,
     }));
-  }, [validPrices, maxChartPoints]);
+  }, [validPrices, maxChartPoints, timelineLabelMode]);
 
   const priceBuckets = useMemo(() => {
     if (!priceValues.length) return [];
@@ -542,7 +717,8 @@ export default function Home() {
     return [...rows].sort((a, b) => {
       if (sortMode === 'date') {
         return (
-          new Date(a.depart_date).getTime() - new Date(b.depart_date).getTime()
+          new Date(a.depart_date).getTime() -
+          new Date(b.depart_date).getTime()
         );
       }
 
@@ -676,13 +852,15 @@ export default function Home() {
     const low =
       analytics.dealThreshold === null
         ? 0
-        : priceValues.filter((price) => price <= analytics.dealThreshold!).length;
+        : priceValues.filter((price) => price <= analytics.dealThreshold!)
+            .length;
 
     const mid =
       analytics.dealThreshold === null || analytics.p75 === null
         ? 0
         : priceValues.filter(
-            (price) => price > analytics.dealThreshold! && price <= analytics.p75!
+            (price) =>
+              price > analytics.dealThreshold! && price <= analytics.p75!
           ).length;
 
     const high =
@@ -701,7 +879,11 @@ export default function Home() {
             chartColors.blueFill,
             chartColors.roseFill,
           ],
-          borderColor: [chartColors.emerald, chartColors.blue, chartColors.rose],
+          borderColor: [
+            chartColors.emerald,
+            chartColors.blue,
+            chartColors.rose,
+          ],
           borderWidth: 2,
         },
       ],
@@ -709,6 +891,8 @@ export default function Home() {
   }, [priceValues, analytics.dealThreshold, analytics.p75]);
 
   const hasData = validPrices.length > 0;
+  const scanIsActive =
+    scanStatus === 'queued' || scanStatus === 'running' || scanLoading;
 
   return (
     <main className="min-h-screen bg-[#08111f] px-4 py-6 text-white md:px-8">
@@ -797,6 +981,100 @@ export default function Home() {
           </section>
         </header>
 
+        <section className="rounded-[2rem] border border-emerald-400/20 bg-gradient-to-br from-emerald-950/40 via-slate-900/90 to-slate-950 p-5 shadow-2xl">
+          <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm font-bold text-emerald-200">
+                <Activity size={17} />
+                Scanner Control
+              </div>
+
+              <h2 className="mt-3 text-2xl font-black">Run a new fare scan</h2>
+
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                Kick off the backend scanner for the selected route. The scanner
+                writes to SQLite, and this dashboard refreshes automatically when
+                the job completes.
+              </p>
+            </div>
+
+            <div className="grid w-full grid-cols-1 gap-3 md:grid-cols-2 xl:max-w-4xl xl:grid-cols-5">
+              <NumberField
+                label="Scan Year"
+                value={scanYear}
+                onChange={setScanYear}
+                min={2024}
+              />
+              <NumberField
+                label="Max Windows"
+                value={scanMaxWindows}
+                onChange={setScanMaxWindows}
+                min={0}
+                helper="0 = all"
+              />
+              <NumberField
+                label="Workers"
+                value={scanMaxWorkers}
+                onChange={setScanMaxWorkers}
+                min={1}
+                helper="2 is safer"
+              />
+              <NumberField
+                label="Slow Mo"
+                value={scanSlowMo}
+                onChange={setScanSlowMo}
+                min={0}
+                helper="ms delay"
+              />
+
+              <div className="flex items-end">
+                <button
+                  onClick={startScan}
+                  disabled={scanIsActive}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 font-black text-slate-950 shadow-lg transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw
+                    size={18}
+                    className={scanIsActive ? 'animate-spin' : ''}
+                  />
+                  {scanIsActive ? 'Scanner Running' : 'Start Scan'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-950/70 p-4 md:flex-row md:items-center md:justify-between">
+            <label className="flex items-center gap-3 text-sm font-semibold text-slate-300">
+              <input
+                type="checkbox"
+                checked={scanHeadless}
+                onChange={(e) => setScanHeadless(e.target.checked)}
+                className="h-4 w-4 accent-emerald-400"
+              />
+              Run headless
+            </label>
+
+            <div className="flex flex-col gap-1 md:items-end">
+              <p className="text-sm text-slate-300">
+                Status:{' '}
+                <span className="font-black text-emerald-300">
+                  {scanStatus ?? 'idle'}
+                </span>
+              </p>
+
+              {activeScanId && (
+                <p className="text-xs text-slate-500">Scan ID: {activeScanId}</p>
+              )}
+
+              {scanError && (
+                <p className="text-sm font-semibold text-red-300">
+                  {scanError}
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
         {apiError && (
           <section className="rounded-3xl border border-red-500/30 bg-red-950/40 p-6 text-red-100">
             <div className="flex items-center gap-3">
@@ -877,7 +1155,10 @@ export default function Home() {
                 <InfoPanel
                   title="Search Context"
                   rows={[
-                    ['Route', `${origin.toUpperCase()} → ${destination.toUpperCase()}`],
+                    [
+                      'Route',
+                      `${origin.toUpperCase()} → ${destination.toUpperCase()}`,
+                    ],
                     ['Trip Length', `${tripLengthDays} days`],
                     ['Adults', `${adults}`],
                     ['Loaded Windows', `${validPrices.length}`],
@@ -895,9 +1176,9 @@ export default function Home() {
                       ],
                       [
                         'Dates',
-                        `${formatLongDate(worstWindow.depart_date)} → ${formatLongDate(
-                          worstWindow.return_date
-                        )}`,
+                        `${formatLongDate(
+                          worstWindow.depart_date
+                        )} → ${formatLongDate(worstWindow.return_date)}`,
                       ],
                       ['Scanned', formatDateTime(worstWindow.scanned_at)],
                     ]}
@@ -920,7 +1201,7 @@ export default function Home() {
                   </h2>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <SelectField
                     label="Group By"
                     value={groupByMode}
@@ -941,11 +1222,24 @@ export default function Home() {
                       { label: 'Highest Fare', value: 'max' },
                     ]}
                   />
+                  <SelectField
+                    label="Date Labels"
+                    value={timelineLabelMode}
+                    onChange={(value) =>
+                      setTimelineLabelMode(value as TimelineLabelMode)
+                    }
+                    options={[
+                      { label: 'Short: Jan 5', value: 'short' },
+                      { label: 'Long: January 5', value: 'monthDay' },
+                      { label: 'Full: Mon, Jan 5, 2026', value: 'full' },
+                      { label: 'ISO: 2026-01-05', value: 'iso' },
+                    ]}
+                  />
                   <NumberField
-                    label="Timeline Points"
+                    label="Timeline Days"
                     value={maxChartPoints}
                     onChange={setMaxChartPoints}
-                    min={10}
+                    min={30}
                   />
                 </div>
               </div>
@@ -953,11 +1247,14 @@ export default function Home() {
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <ChartCard
-                title="Fare Calendar Trend"
+                title="Rest-of-Year Fare Outlook"
                 description="Price by departure date with average and deal-threshold lines."
               >
                 <div className="h-[390px]">
-                  <Line data={timelineChartData} options={chartOptions('Price')} />
+                  <Line
+                    data={timelineChartData}
+                    options={chartOptions('Price')}
+                  />
                 </div>
               </ChartCard>
 
@@ -991,7 +1288,10 @@ export default function Home() {
                 description="Lowest observed fare by the strongest months in your scan data."
               >
                 <div className="h-[360px]">
-                  <Bar data={monthRankChartData} options={chartOptions('Price')} />
+                  <Bar
+                    data={monthRankChartData}
+                    options={chartOptions('Price')}
+                  />
                 </div>
               </ChartCard>
             </section>
@@ -1157,19 +1457,14 @@ export default function Home() {
               <InfoPanel
                 title="Consumer Notes"
                 rows={[
-                  ['Best Month', bestMonths.sort((a, b) => a.min - b.min)[0]?.label ?? '-'],
                   [
-                    'Cheapest Threshold',
-                    formatMoney(analytics.dealThreshold),
+                    'Best Month',
+                    [...bestMonths].sort((a, b) => a.min - b.min)[0]?.label ??
+                      '-',
                   ],
-                  [
-                    'Good Deal Count',
-                    `${analytics.dealCount} windows`,
-                  ],
-                  [
-                    'Use Case',
-                    'Compare date windows before booking',
-                  ],
+                  ['Cheapest Threshold', formatMoney(analytics.dealThreshold)],
+                  ['Good Deal Count', `${analytics.dealCount} windows`],
+                  ['Use Case', 'Compare date windows before booking'],
                 ]}
               />
             </section>
@@ -1244,10 +1539,7 @@ function DealHero({
         </div>
 
         <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-3">
-          <MiniMetric
-            label="Average Fare"
-            value={formatMoney(analytics.avg)}
-          />
+          <MiniMetric label="Average Fare" value={formatMoney(analytics.avg)} />
           <MiniMetric
             label="Deal Threshold"
             value={formatMoney(analytics.dealThreshold)}
@@ -1355,7 +1647,9 @@ function NumberField({
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 font-semibold text-white outline-none transition focus:border-sky-400"
       />
-      {helper && <span className="mt-1 block text-xs text-slate-500">{helper}</span>}
+      {helper && (
+        <span className="mt-1 block text-xs text-slate-500">{helper}</span>
+      )}
     </label>
   );
 }
