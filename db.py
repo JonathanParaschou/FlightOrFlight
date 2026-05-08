@@ -33,6 +33,8 @@ def init_db():
             adults INTEGER NOT NULL,
 
             cheapest_price_usd INTEGER,
+            total_duration_minutes INTEGER,
+            deal_url TEXT,
             status TEXT NOT NULL,
             raw_context TEXT,
 
@@ -40,6 +42,25 @@ def init_db():
         )
         """
     )
+
+    cur.execute("PRAGMA table_info(flight_price_observations)")
+    existing_columns = {row["name"] for row in cur.fetchall()}
+
+    if "total_duration_minutes" not in existing_columns:
+        cur.execute(
+            """
+            ALTER TABLE flight_price_observations
+            ADD COLUMN total_duration_minutes INTEGER
+            """
+        )
+
+    if "deal_url" not in existing_columns:
+        cur.execute(
+            """
+            ALTER TABLE flight_price_observations
+            ADD COLUMN deal_url TEXT
+            """
+        )
 
     cur.execute(
         """
@@ -106,10 +127,12 @@ def save_flight_price(row: dict[str, Any]):
             trip_length_days,
             adults,
             cheapest_price_usd,
+            total_duration_minutes,
+            deal_url,
             status,
             raw_context
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row["scan_id"],
@@ -121,6 +144,8 @@ def save_flight_price(row: dict[str, Any]):
             row["trip_length_days"],
             row["adults"],
             row["cheapest_price_usd"],
+            row.get("total_duration_minutes"),
+            row.get("deal_url"),
             row["status"],
             row["raw_context"],
         ),
@@ -167,6 +192,7 @@ def fetch_latest_prices(
     destination: str,
     trip_length_days: int | None = None,
     adults: int | None = None,
+    max_extra_hours: float | None = None,
     limit: int = 1000,
 ):
     init_db()
@@ -190,8 +216,6 @@ def fetch_latest_prices(
         filters.append("o.adults = ?")
         params.append(adults)
 
-    params.append(limit)
-
     conn = get_connection()
     cur = conn.cursor()
 
@@ -208,6 +232,8 @@ def fetch_latest_prices(
             o.trip_length_days,
             o.adults,
             o.cheapest_price_usd,
+            o.total_duration_minutes,
+            o.deal_url,
             o.status,
             o.created_at
         FROM flight_price_observations o
@@ -240,7 +266,6 @@ def fetch_latest_prices(
            AND o.scanned_at = latest.latest_scanned_at
         WHERE {' AND '.join(filters)}
         ORDER BY o.depart_date ASC
-        LIMIT ?
         """,
         params,
     )
@@ -248,7 +273,7 @@ def fetch_latest_prices(
     rows = [dict(row) for row in cur.fetchall()]
     conn.close()
 
-    return rows
+    return apply_duration_metrics(rows, max_extra_hours=max_extra_hours, limit=limit)
 
 
 def fetch_cheapest_windows(
@@ -256,6 +281,7 @@ def fetch_cheapest_windows(
     destination: str,
     trip_length_days: int | None = None,
     adults: int | None = None,
+    max_extra_hours: float | None = None,
     limit: int = 25,
 ):
     init_db()
@@ -279,8 +305,6 @@ def fetch_cheapest_windows(
         filters.append("adults = ?")
         params.append(adults)
 
-    params.append(limit)
-
     conn = get_connection()
     cur = conn.cursor()
 
@@ -294,6 +318,8 @@ def fetch_cheapest_windows(
             trip_length_days,
             adults,
             MIN(cheapest_price_usd) AS cheapest_price_usd,
+            MIN(total_duration_minutes) AS total_duration_minutes,
+            MAX(deal_url) AS deal_url,
             MAX(scanned_at) AS last_scanned_at,
             COUNT(*) AS observation_count
         FROM flight_price_observations
@@ -306,7 +332,6 @@ def fetch_cheapest_windows(
             trip_length_days,
             adults
         ORDER BY cheapest_price_usd ASC, depart_date ASC
-        LIMIT ?
         """,
         params,
     )
@@ -314,7 +339,43 @@ def fetch_cheapest_windows(
     rows = [dict(row) for row in cur.fetchall()]
     conn.close()
 
-    return rows
+    return apply_duration_metrics(rows, max_extra_hours=max_extra_hours, limit=limit)
+
+
+def apply_duration_metrics(
+    rows: list[dict[str, Any]],
+    max_extra_hours: float | None,
+    limit: int,
+):
+    durations = [
+        row["total_duration_minutes"]
+        for row in rows
+        if row.get("total_duration_minutes") is not None
+    ]
+    base_duration = min(durations) if durations else None
+    filtered_rows = []
+
+    for row in rows:
+        duration = row.get("total_duration_minutes")
+
+        if duration is None or base_duration is None:
+            row["extra_duration_minutes"] = None
+            row["extra_duration_hours"] = None
+        else:
+            extra_minutes = max(0, duration - base_duration)
+            row["extra_duration_minutes"] = extra_minutes
+            row["extra_duration_hours"] = round(extra_minutes / 60, 2)
+
+        if max_extra_hours is not None:
+            if row["extra_duration_minutes"] is None:
+                continue
+
+            if row["extra_duration_minutes"] > max_extra_hours * 60:
+                continue
+
+        filtered_rows.append(row)
+
+    return filtered_rows[:limit]
 
 
 def fetch_summary(
@@ -415,6 +476,7 @@ def fetch_observation_history(
             trip_length_days,
             adults,
             cheapest_price_usd,
+            deal_url,
             status,
             created_at
         FROM flight_price_observations

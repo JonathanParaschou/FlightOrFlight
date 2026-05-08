@@ -186,6 +186,7 @@ def prices(
     destination: str = "HNL",
     trip_length_days: int | None = None,
     adults: int | None = None,
+    max_extra_hours: float | None = Query(default=None, ge=0, le=48),
     limit: int = Query(1000, ge=1, le=5000),
 ):
     return fetch_latest_prices(
@@ -193,6 +194,7 @@ def prices(
         destination=destination,
         trip_length_days=trip_length_days,
         adults=adults,
+        max_extra_hours=max_extra_hours,
         limit=limit,
     )
 
@@ -203,6 +205,7 @@ def cheapest_prices(
     destination: str = "HNL",
     trip_length_days: int | None = None,
     adults: int | None = None,
+    max_extra_hours: float | None = Query(default=None, ge=0, le=48),
     limit: int = Query(25, ge=1, le=500),
 ):
     return fetch_cheapest_windows(
@@ -210,6 +213,7 @@ def cheapest_prices(
         destination=destination,
         trip_length_days=trip_length_days,
         adults=adults,
+        max_extra_hours=max_extra_hours,
         limit=limit,
     )
 

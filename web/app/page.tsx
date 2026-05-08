@@ -52,6 +52,10 @@ type FlightPrice = {
   trip_length_days: number;
   adults: number;
   cheapest_price_usd: number | null;
+  total_duration_minutes: number | null;
+  extra_duration_minutes: number | null;
+  extra_duration_hours: number | null;
+  deal_url: string | null;
   status: string;
   created_at: string;
 };
@@ -64,6 +68,10 @@ type CheapestWindow = {
   trip_length_days: number;
   adults: number;
   cheapest_price_usd: number | null;
+  total_duration_minutes: number | null;
+  extra_duration_minutes: number | null;
+  extra_duration_hours: number | null;
+  deal_url: string | null;
   last_scanned_at: string;
   observation_count: number;
 };
@@ -115,6 +123,19 @@ function getCurrentYear() {
 function formatMoney(value: number | null | undefined) {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
   return `$${Math.round(value).toLocaleString()}`;
+}
+
+function formatDuration(minutes: number | null | undefined) {
+  if (minutes === null || minutes === undefined || Number.isNaN(minutes)) {
+    return '-';
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+
+  if (hours === 0) return `${mins}m`;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
 }
 
 function formatDate(value: string | null | undefined) {
@@ -277,6 +298,7 @@ export default function Home() {
   const [tripLengthDays, setTripLengthDays] = useState(4);
   const [adults, setAdults] = useState(1);
   const [cheapestLimit, setCheapestLimit] = useState(100);
+  const [maxExtraHours, setMaxExtraHours] = useState(0);
 
   const [prices, setPrices] = useState<FlightPrice[]>([]);
   const [cheapest, setCheapest] = useState<CheapestWindow[]>([]);
@@ -316,6 +338,10 @@ export default function Home() {
       trip_length_days: String(tripLengthDays),
       adults: String(adults),
     });
+
+    if (maxExtraHours > 0) {
+      params.set('max_extra_hours', String(maxExtraHours));
+    }
 
     try {
       const [pricesRes, cheapestRes, summaryRes] = await Promise.all([
@@ -929,7 +955,7 @@ export default function Home() {
           </div>
 
           <section className="mt-8 rounded-3xl border border-white/10 bg-slate-950/65 p-4 backdrop-blur">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-8">
               <InputField
                 label="From"
                 value={origin}
@@ -966,6 +992,13 @@ export default function Home() {
                 onChange={setPriceCap}
                 min={0}
                 helper="0 = no cap"
+              />
+              <NumberField
+                label="Max Extra Hrs"
+                value={maxExtraHours}
+                onChange={setMaxExtraHours}
+                min={0}
+                helper="0 = any"
               />
 
               <div className="flex items-end">
@@ -1161,6 +1194,10 @@ export default function Home() {
                     ],
                     ['Trip Length', `${tripLengthDays} days`],
                     ['Adults', `${adults}`],
+                    [
+                      'Extra Time Filter',
+                      maxExtraHours > 0 ? `${maxExtraHours} hours` : 'Any',
+                    ],
                     ['Loaded Windows', `${validPrices.length}`],
                     ['Last Scan', formatDateTime(summary?.last_scanned_at)],
                   ]}
@@ -1380,9 +1417,12 @@ export default function Home() {
                           <th className="px-4 py-3">Rank</th>
                           <th className="px-4 py-3">Depart</th>
                           <th className="px-4 py-3">Return</th>
+                          <th className="px-4 py-3">Duration</th>
+                          <th className="px-4 py-3">Extra Time</th>
                           <th className="px-4 py-3">Price</th>
                           <th className="px-4 py-3">Savings vs Avg</th>
                           <th className="px-4 py-3">Scans</th>
+                          <th className="px-4 py-3">Deal</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1409,6 +1449,12 @@ export default function Home() {
                                 <td className="px-4 py-3">
                                   {formatLongDate(row.return_date)}
                                 </td>
+                                <td className="px-4 py-3">
+                                  {formatDuration(row.total_duration_minutes)}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {formatDuration(row.extra_duration_minutes)}
+                                </td>
                                 <td className="px-4 py-3 font-black text-emerald-300">
                                   {formatMoney(row.cheapest_price_usd)}
                                 </td>
@@ -1419,6 +1465,20 @@ export default function Home() {
                                 </td>
                                 <td className="px-4 py-3">
                                   {row.observation_count}
+                                </td>
+                                <td className="px-4 py-3">
+                                  {row.deal_url ? (
+                                    <a
+                                      href={row.deal_url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="font-bold text-sky-300 transition hover:text-sky-200"
+                                    >
+                                      Open
+                                    </a>
+                                  ) : (
+                                    '-'
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -1541,14 +1601,12 @@ function DealHero({
         <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-3">
           <MiniMetric label="Average Fare" value={formatMoney(analytics.avg)} />
           <MiniMetric
-            label="Deal Threshold"
-            value={formatMoney(analytics.dealThreshold)}
+            label="Travel Duration"
+            value={formatDuration(bestWindow?.total_duration_minutes)}
           />
           <MiniMetric
-            label="Observed Count"
-            value={`${bestWindow?.observation_count ?? 0} scan${
-              bestWindow?.observation_count === 1 ? '' : 's'
-            }`}
+            label="Extra Time"
+            value={formatDuration(bestWindow?.extra_duration_minutes)}
           />
         </div>
       </div>
@@ -1585,17 +1643,36 @@ function DealCard({
         </p>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <MiniMetric
+          label="Duration"
+          value={formatDuration(row.total_duration_minutes)}
+        />
+        <MiniMetric
+          label="Extra"
+          value={formatDuration(row.extra_duration_minutes)}
+        />
         <MiniMetric
           label="Savings"
           value={savings !== null && savings > 0 ? formatMoney(savings) : '-'}
         />
-        <MiniMetric label="Scans" value={row.observation_count} />
       </div>
 
       <p className="mt-4 text-xs text-slate-500">
+        {row.observation_count} scan{row.observation_count === 1 ? '' : 's'}.
         Last scanned {formatDateTime(row.last_scanned_at)}
       </p>
+
+      {row.deal_url && (
+        <a
+          href={row.deal_url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-black text-sky-200 transition hover:bg-sky-400/20"
+        >
+          Open Deal
+        </a>
+      )}
     </div>
   );
 }

@@ -423,6 +423,26 @@ def parse_price_value(match: str, config: Config):
     return None
 
 
+def parse_duration_minutes(text: str) -> int | None:
+    durations = []
+
+    for hours, minutes in re.findall(
+        r"(?:(\d{1,2})\s*hr)?\s*(?:(\d{1,2})\s*min)",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        total = int(minutes)
+        if hours:
+            total += int(hours) * 60
+        durations.append(total)
+
+    for hours in re.findall(r"(\d{1,2})\s*hr(?!\s*[\d{1,2}]*\s*min)", text, flags=re.IGNORECASE):
+        durations.append(int(hours) * 60)
+
+    plausible = [minutes for minutes in durations if 30 <= minutes <= 48 * 60]
+    return min(plausible) if plausible else None
+
+
 def extract_route_price(page, config: Config):
     body = page.locator("body").inner_text(timeout=15000)
     normalized = body.replace("\u00a0", " ")
@@ -441,7 +461,8 @@ def extract_route_price(page, config: Config):
             prices.append(price)
 
     if prices:
-        return min(prices), normalized[:4000]
+        context_text = normalized[:4000]
+        return min(prices), parse_duration_minutes(context_text), context_text
 
     round_trip_matches = re.findall(
         r"\$([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{2,5})\s+round trip",
@@ -455,7 +476,8 @@ def extract_route_price(page, config: Config):
             prices.append(price)
 
     if prices:
-        return min(prices), normalized[:4000]
+        context_text = normalized[:4000]
+        return min(prices), parse_duration_minutes(context_text), context_text
 
     explore_matches = re.findall(
         r"Explore flights\s+from\s+\$([0-9]{1,3}(?:,[0-9]{3})*|[0-9]{2,5})",
@@ -469,7 +491,8 @@ def extract_route_price(page, config: Config):
             prices.append(price)
 
     if prices:
-        return min(prices), normalized[-3000:]
+        context_text = normalized[-3000:]
+        return min(prices), parse_duration_minutes(context_text), context_text
 
     lower = normalized.lower()
     idx = lower.find("top departing flights")
@@ -488,11 +511,14 @@ def extract_route_price(page, config: Config):
                 prices.append(price)
 
         if prices:
-            return min(prices), results_section[:4000]
+            context_text = results_section[:4000]
+            return min(prices), parse_duration_minutes(context_text), context_text
 
-        return None, results_section[:4000]
+        context_text = results_section[:4000]
+        return None, parse_duration_minutes(context_text), context_text
 
-    return None, normalized[-4000:]
+    context_text = normalized[-4000:]
+    return None, parse_duration_minutes(context_text), context_text
 
 
 def fill_form_and_search(page, config: Config, depart_date: date, return_date: date):
@@ -516,6 +542,8 @@ def build_row(
     return_date: date,
     status: str = "unknown",
     price: int | None = None,
+    total_duration_minutes: int | None = None,
+    deal_url: str | None = None,
     raw_context: str | None = None,
 ):
     return {
@@ -528,6 +556,8 @@ def build_row(
         "trip_length_days": config.trip_length_days,
         "adults": config.adults,
         "cheapest_price_usd": price,
+        "total_duration_minutes": total_duration_minutes,
+        "deal_url": deal_url,
         "status": status,
         "raw_context": raw_context[:3000] if raw_context else None,
     }
@@ -552,7 +582,8 @@ def scan_one_window(config: Config, scan_id: str, depart_date: date, return_date
         try:
             fill_form_and_search(page, config, depart_date, return_date)
 
-            price, context_text = extract_route_price(page, config)
+            price, total_duration_minutes, context_text = extract_route_price(page, config)
+            deal_url = page.url
 
             if price is None:
                 row = build_row(
@@ -562,6 +593,8 @@ def scan_one_window(config: Config, scan_id: str, depart_date: date, return_date
                     return_date=return_date,
                     status="no_route_price_found",
                     price=None,
+                    total_duration_minutes=total_duration_minutes,
+                    deal_url=deal_url,
                     raw_context=context_text,
                 )
                 # save_debug(page, config, depart_date, return_date, "no_price")
@@ -573,6 +606,8 @@ def scan_one_window(config: Config, scan_id: str, depart_date: date, return_date
                     return_date=return_date,
                     status="success",
                     price=price,
+                    total_duration_minutes=total_duration_minutes,
+                    deal_url=deal_url,
                     raw_context=context_text,
                 )
 
