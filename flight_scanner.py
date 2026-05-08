@@ -129,46 +129,72 @@ def clear_and_type_into_focused(page, value: str):
     page.wait_for_timeout(500)
 
 
-def set_origin_if_needed(page, config: Config):
+def fill_airport_input(page, locator, value: str):
+    locator.fill(value, timeout=5000)
+    page.wait_for_timeout(1500)
+
+
+def type_airport_input(page, locator, value: str):
+    locator.evaluate("element => element.focus()")
+    locator.fill("", timeout=5000)
+    page.keyboard.type(value, delay=50)
+    page.wait_for_timeout(1500)
+
+
+def select_airport_option(page, candidates: list[str]):
+    clean_candidates = []
+    page.wait_for_timeout(1000)
+
+    for candidate in candidates:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        clean_candidates.append(candidate)
+
+        try:
+            option = page.get_by_role("option").filter(has_text=candidate).first
+            if option.is_visible(timeout=1500):
+                option.click(timeout=5000)
+                page.wait_for_timeout(800)
+                return
+        except Exception:
+            pass
+
+    raise RuntimeError(f"Could not find airport option for: {', '.join(clean_candidates)}")
+
+
+def verify_airport_selection(page, code: str, text: str, label: str):
+    page.wait_for_timeout(500)
     body = page.locator("body").inner_text(timeout=10000)
 
-    if config.origin_text in body or config.origin_code in body:
-        print(f"Origin already appears set: {config.origin_text}/{config.origin_code}")
+    if code in body or (text and text in body):
+        print(f"{label} verified: {code}")
         return
 
+    raise RuntimeError(
+        f"{label} selection did not verify for {code}. "
+        f"Visible page text: {body[:1000]}"
+    )
+
+
+def set_origin_if_needed(page, config: Config):
     print(f"Setting origin: {config.origin_code}")
 
     origin_input = page.locator('input[aria-label^="Where from?"]').first
     origin_input.wait_for(state="visible", timeout=15000)
-    origin_input.click(timeout=5000)
+    last_error = None
 
-    clear_and_type_into_focused(page, config.origin_code)
-
-    selected = False
-
-    for candidate in [config.origin_text, config.origin_code]:
+    for _ in range(2):
         try:
-            loc = page.get_by_text(candidate, exact=False)
-
-            for i in range(loc.count()):
-                item = loc.nth(i)
-
-                if item.is_visible(timeout=700):
-                    item.click(timeout=5000)
-                    selected = True
-                    page.wait_for_timeout(700)
-                    break
-
-            if selected:
-                break
-
-        except Exception:
-            pass
-
-    if not selected:
-        page.keyboard.press("ArrowDown")
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(700)
+            fill_airport_input(page, origin_input, config.origin_code)
+            select_airport_option(page, [config.origin_code, config.origin_text])
+            verify_airport_selection(page, config.origin_code, config.origin_text, "Origin")
+            break
+        except Exception as error:
+            last_error = error
+            page.wait_for_timeout(1200)
+    else:
+        raise last_error
 
     print("Origin set.")
 
@@ -178,35 +204,29 @@ def set_destination(page, config: Config):
 
     destination_input = page.locator('input[aria-label^="Where to?"]').first
     destination_input.wait_for(state="visible", timeout=15000)
-    destination_input.click(timeout=5000)
+    last_error = None
 
-    clear_and_type_into_focused(page, config.destination_code)
-
-    selected = False
-
-    for candidate in [config.destination_select_text, "Honolulu", config.destination_code]:
+    for _ in range(2):
         try:
-            loc = page.get_by_text(candidate, exact=False)
-
-            for i in range(loc.count()):
-                item = loc.nth(i)
-
-                if item.is_visible(timeout=700):
-                    item.click(timeout=5000)
-                    selected = True
-                    page.wait_for_timeout(700)
-                    break
-
-            if selected:
-                break
-
-        except Exception:
-            pass
-
-    if not selected:
-        page.keyboard.press("ArrowDown")
-        page.keyboard.press("Enter")
-        page.wait_for_timeout(700)
+            destination_input = page.locator('input[aria-label^="Where to?"]').first
+            destination_input.wait_for(state="visible", timeout=15000)
+            type_airport_input(page, destination_input, config.destination_code)
+            select_airport_option(
+                page,
+                [config.destination_code, config.destination_select_text],
+            )
+            verify_airport_selection(
+                page,
+                config.destination_code,
+                config.destination_select_text,
+                "Destination",
+            )
+            break
+        except Exception as error:
+            last_error = error
+            page.wait_for_timeout(1200)
+    else:
+        raise last_error
 
     print("Destination set.")
 
@@ -427,17 +447,14 @@ def parse_duration_minutes(text: str) -> int | None:
     durations = []
 
     for hours, minutes in re.findall(
-        r"(?:(\d{1,2})\s*hr)?\s*(?:(\d{1,2})\s*min)",
+        r"(\d{1,2})\s*hr(?:\s*(\d{1,2})\s*min)?",
         text,
         flags=re.IGNORECASE,
     ):
-        total = int(minutes)
-        if hours:
-            total += int(hours) * 60
+        total = int(hours) * 60
+        if minutes:
+            total += int(minutes)
         durations.append(total)
-
-    for hours in re.findall(r"(\d{1,2})\s*hr(?!\s*[\d{1,2}]*\s*min)", text, flags=re.IGNORECASE):
-        durations.append(int(hours) * 60)
 
     plausible = [minutes for minutes in durations if 30 <= minutes <= 48 * 60]
     return min(plausible) if plausible else None
