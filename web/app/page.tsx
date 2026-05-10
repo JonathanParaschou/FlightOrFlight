@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -27,7 +27,9 @@ import {
   Sparkles,
   TrendingDown,
   Wallet,
+  X,
 } from 'lucide-react';
+import { airports, type Airport } from './data/airports';
 
 ChartJS.register(
   CategoryScale,
@@ -91,6 +93,7 @@ type GroupByMode = 'month' | 'weekday';
 type SortMode = 'price' | 'date' | 'savings';
 type ViewMode = 'cards' | 'table';
 type TimelineLabelMode = 'short' | 'monthDay' | 'full' | 'iso';
+type WeekdayFilter = 'all' | '0' | '1' | '2' | '3' | '4' | '5' | '6';
 type ScanStatus =
   | 'queued'
   | 'running'
@@ -102,18 +105,29 @@ type ScanStatus =
 
 const API_BASE = 'http://127.0.0.1:8000';
 
+const weekdayOptions: { label: string; value: WeekdayFilter }[] = [
+  { label: 'Any Day', value: 'all' },
+  { label: 'Sunday', value: '0' },
+  { label: 'Monday', value: '1' },
+  { label: 'Tuesday', value: '2' },
+  { label: 'Wednesday', value: '3' },
+  { label: 'Thursday', value: '4' },
+  { label: 'Friday', value: '5' },
+  { label: 'Saturday', value: '6' },
+];
+
 const chartColors = {
-  blue: 'rgba(56, 189, 248, 1)',
-  blueFill: 'rgba(56, 189, 248, 0.18)',
-  emerald: 'rgba(52, 211, 153, 1)',
-  emeraldFill: 'rgba(52, 211, 153, 0.18)',
-  amber: 'rgba(251, 191, 36, 1)',
-  amberFill: 'rgba(251, 191, 36, 0.2)',
-  rose: 'rgba(251, 113, 133, 1)',
-  roseFill: 'rgba(251, 113, 133, 0.18)',
-  slate: 'rgba(148, 163, 184, 1)',
-  grid: 'rgba(148, 163, 184, 0.12)',
-  text: 'rgba(226, 232, 240, 0.85)',
+  blue: 'rgba(0, 122, 255, 1)',
+  blueFill: 'rgba(0, 122, 255, 0.12)',
+  emerald: 'rgba(52, 199, 89, 1)',
+  emeraldFill: 'rgba(52, 199, 89, 0.13)',
+  amber: 'rgba(255, 159, 10, 1)',
+  amberFill: 'rgba(255, 159, 10, 0.14)',
+  rose: 'rgba(255, 59, 48, 1)',
+  roseFill: 'rgba(255, 59, 48, 0.12)',
+  slate: 'rgba(107, 114, 128, 1)',
+  grid: 'rgba(17, 24, 39, 0.08)',
+  text: 'rgba(55, 65, 81, 0.88)',
 };
 
 function getCurrentYear() {
@@ -293,8 +307,9 @@ function chartOptions(yLabel = 'Price') {
 }
 
 export default function Home() {
-  const [origin, setOrigin] = useState('MSP');
-  const [destination, setDestination] = useState('HNL');
+  const [originAirport, setOriginAirport] = useState<Airport | null>(null);
+  const [destinationAirport, setDestinationAirport] =
+    useState<Airport | null>(null);
   const [tripLengthDays, setTripLengthDays] = useState(4);
   const [adults, setAdults] = useState(1);
   const [cheapestLimit, setCheapestLimit] = useState(100);
@@ -306,7 +321,7 @@ export default function Home() {
 
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [hasSearched, setHasSearched] = useState(true);
+  const [hasSearched, setHasSearched] = useState(false);
 
   const [chartMetric, setChartMetric] = useState<ChartMetric>('min');
   const [groupByMode, setGroupByMode] = useState<GroupByMode>('month');
@@ -314,6 +329,7 @@ export default function Home() {
   const [timelineLabelMode, setTimelineLabelMode] =
     useState<TimelineLabelMode>('full');
   const [priceCap, setPriceCap] = useState<number>(0);
+  const [weekdayFilter, setWeekdayFilter] = useState<WeekdayFilter>('all');
   const [sortMode, setSortMode] = useState<SortMode>('price');
   const [viewMode, setViewMode] = useState<ViewMode>('cards');
 
@@ -327,7 +343,22 @@ export default function Home() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
 
+  const origin = originAirport?.code ?? '';
+  const destination = destinationAirport?.code ?? '';
+  const selectedRouteLabel =
+    origin && destination ? `${origin} → ${destination}` : 'Select a route';
+  const routeIsReady = Boolean(originAirport && destinationAirport);
+  const selectedWeekdayLabel =
+    weekdayOptions.find((option) => option.value === weekdayFilter)?.label ??
+    'Any Day';
+
   async function loadData() {
+    if (!originAirport || !destinationAirport) {
+      setHasSearched(false);
+      setApiError('Choose both origin and destination airports first.');
+      return;
+    }
+
     setLoading(true);
     setApiError(null);
     setHasSearched(true);
@@ -347,7 +378,7 @@ export default function Home() {
       const [pricesRes, cheapestRes, summaryRes] = await Promise.all([
         fetch(`${API_BASE}/prices?${params.toString()}&limit=5000`),
         fetch(
-          `${API_BASE}/prices/cheapest?${params.toString()}&limit=${cheapestLimit}`
+          `${API_BASE}/prices/cheapest?${params.toString()}&limit=500`
         ),
         fetch(`${API_BASE}/summary?${params.toString()}`),
       ]);
@@ -373,6 +404,11 @@ export default function Home() {
   }
 
   async function startScan() {
+    if (!originAirport || !destinationAirport) {
+      setScanError('Choose both origin and destination airports first.');
+      return;
+    }
+
     setScanLoading(true);
     setScanError(null);
     setScanStatus('queued');
@@ -388,14 +424,10 @@ export default function Home() {
         },
         body: JSON.stringify({
           origin_code: originCode,
-          origin_text:
-            originCode === 'MSP' ? 'Minneapolis' : originCode,
+          origin_text: getAirportScannerText(originAirport),
 
           destination_code: destinationCode,
-          destination_select_text:
-            destinationCode === 'HNL'
-              ? 'Honolulu HNL'
-              : destinationCode,
+          destination_select_text: getAirportScannerText(destinationAirport),
 
           year: scanYear,
           trip_length_days: tripLengthDays,
@@ -436,11 +468,6 @@ export default function Home() {
       setScanLoading(false);
     }
   }
-
-  useEffect(() => {
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     if (!activeScanId) return;
@@ -493,12 +520,17 @@ export default function Home() {
         ...p,
         cheapest_price_usd: p.cheapest_price_usd as number,
       }))
+      .filter((p) =>
+        weekdayFilter === 'all'
+          ? true
+          : getWeekdayIndex(p.depart_date) === Number(weekdayFilter)
+      )
       .filter((p) => (priceCap > 0 ? p.cheapest_price_usd <= priceCap : true))
       .sort(
         (a, b) =>
           new Date(a.depart_date).getTime() - new Date(b.depart_date).getTime()
       );
-  }, [prices, priceCap]);
+  }, [prices, priceCap, weekdayFilter]);
 
   const priceValues = useMemo(() => {
     return validPrices.map((p) => p.cheapest_price_usd);
@@ -549,11 +581,16 @@ export default function Home() {
   const bestWindow = useMemo(() => {
     return cheapest
       .filter((row) => row.cheapest_price_usd !== null)
+      .filter((row) =>
+        weekdayFilter === 'all'
+          ? true
+          : getWeekdayIndex(row.depart_date) === Number(weekdayFilter)
+      )
       .sort(
         (a, b) =>
           (a.cheapest_price_usd ?? 0) - (b.cheapest_price_usd ?? 0)
       )[0];
-  }, [cheapest]);
+  }, [cheapest, weekdayFilter]);
 
   const worstWindow = useMemo(() => {
     return [...validPrices].sort(
@@ -738,7 +775,13 @@ export default function Home() {
   }, [priceValues]);
 
   const sortedCheapest = useMemo(() => {
-    const rows = cheapest.filter((row) => row.cheapest_price_usd !== null);
+    const rows = cheapest
+      .filter((row) => row.cheapest_price_usd !== null)
+      .filter((row) =>
+        weekdayFilter === 'all'
+          ? true
+          : getWeekdayIndex(row.depart_date) === Number(weekdayFilter)
+      );
 
     return [...rows].sort((a, b) => {
       if (sortMode === 'date') {
@@ -759,7 +802,7 @@ export default function Home() {
 
       return (a.cheapest_price_usd ?? 0) - (b.cheapest_price_usd ?? 0);
     });
-  }, [cheapest, sortMode, analytics.avg]);
+  }, [cheapest, sortMode, analytics.avg, weekdayFilter]);
 
   const timelineChartData = useMemo(() => {
     return {
@@ -921,25 +964,25 @@ export default function Home() {
     scanStatus === 'queued' || scanStatus === 'running' || scanLoading;
 
   return (
-    <main className="min-h-screen bg-[#08111f] px-4 py-6 text-white md:px-8">
-      <div className="mx-auto max-w-[1500px] space-y-6">
-        <header className="overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-slate-900 via-slate-950 to-sky-950 p-6 shadow-2xl md:p-8">
+    <main className="min-h-screen px-4 py-5 text-slate-950 md:px-8">
+      <div className="mx-auto max-w-[1500px] space-y-5">
+        <header className="rounded-[28px] border border-white/80 bg-white/75 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur-2xl md:p-7">
           <div className="flex flex-col justify-between gap-6 xl:flex-row xl:items-end">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-semibold text-sky-200">
+              <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50/80 px-3 py-1.5 text-sm font-semibold text-slate-700">
                 <Plane size={18} />
                 Flight Scanner
               </div>
 
-              <h1 className="mt-5 max-w-4xl text-4xl font-black tracking-tight md:text-6xl">
+              <h1 className="mt-5 max-w-4xl text-4xl font-semibold tracking-tight text-slate-950 md:text-6xl">
                 Find the best time to fly, not just the cheapest row.
               </h1>
 
-              <p className="mt-4 max-w-3xl text-base leading-7 text-slate-300 md:text-lg">
+              <p className="mt-4 max-w-3xl text-base leading-7 text-slate-600 md:text-lg">
                 Compare route prices like a shopper: best dates, cheapest months,
                 price spread, fare distribution, and deal thresholds for{' '}
-                <span className="font-semibold text-white">
-                  {origin.toUpperCase()} → {destination.toUpperCase()}
+                <span className="font-semibold text-slate-950">
+                  {selectedRouteLabel}
                 </span>
                 .
               </p>
@@ -947,27 +990,45 @@ export default function Home() {
 
             <button
               onClick={loadData}
-              className="inline-flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white px-5 py-3 font-bold text-slate-950 shadow-xl transition hover:bg-sky-100"
+              disabled={!routeIsReady}
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-900 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
               {loading ? 'Refreshing...' : 'Refresh Data'}
             </button>
           </div>
 
-          <section className="mt-8 rounded-3xl border border-white/10 bg-slate-950/65 p-4 backdrop-blur">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-8">
-              <InputField
-                label="From"
-                value={origin}
-                onChange={setOrigin}
-                placeholder="MSP"
-              />
-              <InputField
-                label="To"
-                value={destination}
-                onChange={setDestination}
-                placeholder="HNL"
-              />
+          <section className="relative z-10 mt-7 rounded-[22px] border border-slate-200/80 bg-slate-50/80 p-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+              <div>
+                <AirportAutocomplete
+                  label="From"
+                  selected={originAirport}
+                  onSelect={setOriginAirport}
+                  placeholder="Search airport, city, or code"
+                />
+              </div>
+              <div>
+                <AirportAutocomplete
+                  label="To"
+                  selected={destinationAirport}
+                  onSelect={setDestinationAirport}
+                  placeholder="Search airport, city, or code"
+                />
+              </div>
+              <div className="flex items-start lg:min-w-[180px]">
+                <button
+                  onClick={loadData}
+                  disabled={!routeIsReady}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#007aff] px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-blue-500/20 transition hover:bg-[#006ee6] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Search size={18} />
+                  Search
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <NumberField
                 label="Trip Days"
                 value={tripLengthDays}
@@ -980,11 +1041,11 @@ export default function Home() {
                 onChange={setAdults}
                 min={1}
               />
-              <NumberField
-                label="Cheapest Rows"
-                value={cheapestLimit}
-                onChange={setCheapestLimit}
-                min={1}
+              <SelectField
+                label="Depart Day"
+                value={weekdayFilter}
+                onChange={(value) => setWeekdayFilter(value as WeekdayFilter)}
+                options={weekdayOptions}
               />
               <NumberField
                 label="Price Cap"
@@ -1000,31 +1061,21 @@ export default function Home() {
                 min={0}
                 helper="0 = any"
               />
-
-              <div className="flex items-end">
-                <button
-                  onClick={loadData}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-sky-400 px-5 py-3 font-black text-slate-950 shadow-lg shadow-sky-950/40 transition hover:bg-sky-300"
-                >
-                  <Search size={18} />
-                  Search
-                </button>
-              </div>
             </div>
           </section>
         </header>
 
-        <section className="rounded-[2rem] border border-emerald-400/20 bg-gradient-to-br from-emerald-950/40 via-slate-900/90 to-slate-950 p-5 shadow-2xl">
+        <section className="rounded-[28px] border border-white/80 bg-white/70 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
           <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
             <div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm font-bold text-emerald-200">
+              <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700">
                 <Activity size={17} />
                 Scanner Control
               </div>
 
-              <h2 className="mt-3 text-2xl font-black">Run a new fare scan</h2>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">Run a new fare scan</h2>
 
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
                 Kick off the backend scanner for the selected route. The scanner
                 writes to SQLite, and this dashboard refreshes automatically when
                 the job completes.
@@ -1060,11 +1111,11 @@ export default function Home() {
                 helper="ms delay"
               />
 
-              <div className="flex items-end">
+              <div className="flex items-start pt-7">
                 <button
                   onClick={startScan}
-                  disabled={scanIsActive}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-400 px-5 py-3 font-black text-slate-950 shadow-lg transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={scanIsActive || !routeIsReady}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#34c759] px-5 py-3 text-sm font-semibold text-white shadow-sm shadow-emerald-500/20 transition hover:bg-[#2fb350] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <RefreshCw
                     size={18}
@@ -1076,21 +1127,21 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-950/70 p-4 md:flex-row md:items-center md:justify-between">
-            <label className="flex items-center gap-3 text-sm font-semibold text-slate-300">
+          <div className="mt-5 flex flex-col gap-3 rounded-[20px] border border-slate-200/80 bg-slate-50/80 p-4 md:flex-row md:items-center md:justify-between">
+            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
               <input
                 type="checkbox"
                 checked={scanHeadless}
                 onChange={(e) => setScanHeadless(e.target.checked)}
-                className="h-4 w-4 accent-emerald-400"
+                className="h-4 w-4 accent-[#34c759]"
               />
               Run headless
             </label>
 
             <div className="flex flex-col gap-1 md:items-end">
-              <p className="text-sm text-slate-300">
+              <p className="text-sm text-slate-600">
                 Status:{' '}
-                <span className="font-black text-emerald-300">
+                <span className="font-semibold text-emerald-600">
                   {scanStatus ?? 'idle'}
                 </span>
               </p>
@@ -1100,7 +1151,7 @@ export default function Home() {
               )}
 
               {scanError && (
-                <p className="text-sm font-semibold text-red-300">
+                <p className="text-sm font-semibold text-red-600">
                   {scanError}
                 </p>
               )}
@@ -1109,7 +1160,7 @@ export default function Home() {
         </section>
 
         {apiError && (
-          <section className="rounded-3xl border border-red-500/30 bg-red-950/40 p-6 text-red-100">
+          <section className="rounded-[24px] border border-red-200 bg-red-50 p-6 text-red-700 shadow-sm">
             <div className="flex items-center gap-3">
               <AlertCircle />
               <p>{apiError}</p>
@@ -1118,16 +1169,15 @@ export default function Home() {
         )}
 
         {!loading && !apiError && hasSearched && !hasData && (
-          <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-10 text-center shadow-2xl">
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-sky-300">
+          <section className="rounded-[28px] border border-white/80 bg-white/70 p-10 text-center shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-600">
               No Flight Data
             </p>
-            <h2 className="mt-3 text-3xl font-bold">
+            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950">
               No stored scan data exists for this route.
             </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-slate-400">
-              Run your scanner for {origin.toUpperCase()} →{' '}
-              {destination.toUpperCase()} with a {tripLengthDays}-day trip and{' '}
+            <p className="mx-auto mt-3 max-w-2xl text-slate-600">
+              Run your scanner for {selectedRouteLabel} with a {tripLengthDays}-day trip and{' '}
               {adults} adult{adults === 1 ? '' : 's'}, then refresh this page.
             </p>
           </section>
@@ -1190,10 +1240,11 @@ export default function Home() {
                   rows={[
                     [
                       'Route',
-                      `${origin.toUpperCase()} → ${destination.toUpperCase()}`,
+                      selectedRouteLabel,
                     ],
                     ['Trip Length', `${tripLengthDays} days`],
                     ['Adults', `${adults}`],
+                    ['Departure Day', selectedWeekdayLabel],
                     [
                       'Extra Time Filter',
                       maxExtraHours > 0 ? `${maxExtraHours} hours` : 'Any',
@@ -1224,16 +1275,16 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-5 shadow-2xl">
+            <section className="rounded-[28px] border border-white/80 bg-white/70 p-5 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
               <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
                 <div>
-                  <div className="flex items-center gap-2 text-sky-300">
+                  <div className="flex items-center gap-2 text-blue-600">
                     <SlidersHorizontal size={18} />
-                    <p className="text-sm font-bold uppercase tracking-[0.2em]">
+                    <p className="text-sm font-semibold uppercase tracking-[0.16em]">
                       Chart Controls
                     </p>
                   </div>
-                  <h2 className="mt-2 text-2xl font-black">
+                  <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
                     Configure the dashboard view
                   </h2>
                 </div>
@@ -1359,11 +1410,11 @@ export default function Home() {
                 </div>
               </ChartCard>
 
-              <div className="xl:col-span-2 rounded-[2rem] border border-white/10 bg-slate-900/80 p-6 shadow-2xl">
+              <div className="xl:col-span-2 rounded-[28px] border border-white/80 bg-white/70 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
                 <div className="mb-5 flex flex-col justify-between gap-4 md:flex-row md:items-center">
                   <div>
-                    <h2 className="text-2xl font-black">Best Travel Windows</h2>
-                    <p className="mt-1 text-sm text-slate-400">
+                    <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Best Travel Windows</h2>
+                    <p className="mt-1 text-sm text-slate-600">
                       Shopper-friendly view of the cheapest dates found.
                     </p>
                   </div>
@@ -1391,6 +1442,17 @@ export default function Home() {
                   </div>
                 </div>
 
+                <div className="mb-4 flex justify-end">
+                  <div className="w-full sm:w-[160px]">
+                    <NumberField
+                      label="Rows"
+                      value={cheapestLimit}
+                      onChange={setCheapestLimit}
+                      min={1}
+                    />
+                  </div>
+                </div>
+
                 {viewMode === 'cards' ? (
                   <div className="grid max-h-[620px] grid-cols-1 gap-3 overflow-auto pr-1 md:grid-cols-2">
                     {sortedCheapest.slice(0, cheapestLimit).map((row, index) => {
@@ -1410,9 +1472,9 @@ export default function Home() {
                     })}
                   </div>
                 ) : (
-                  <div className="max-h-[620px] overflow-auto rounded-2xl border border-white/10">
+                  <div className="max-h-[620px] overflow-auto rounded-[18px] border border-slate-200 bg-white">
                     <table className="w-full border-collapse text-left text-sm">
-                      <thead className="sticky top-0 bg-slate-800 text-slate-200">
+                      <thead className="sticky top-0 bg-slate-50 text-slate-600">
                         <tr>
                           <th className="px-4 py-3">Rank</th>
                           <th className="px-4 py-3">Depart</th>
@@ -1438,9 +1500,9 @@ export default function Home() {
                             return (
                               <tr
                                 key={`${row.depart_date}-${row.return_date}-${row.cheapest_price_usd}`}
-                                className="border-t border-white/10"
+                                className="border-t border-slate-100"
                               >
-                                <td className="px-4 py-3 text-slate-400">
+                                <td className="px-4 py-3 text-slate-500">
                                   #{index + 1}
                                 </td>
                                 <td className="px-4 py-3">
@@ -1455,10 +1517,10 @@ export default function Home() {
                                 <td className="px-4 py-3">
                                   {formatDuration(row.extra_duration_minutes)}
                                 </td>
-                                <td className="px-4 py-3 font-black text-emerald-300">
+                                <td className="px-4 py-3 font-semibold text-emerald-600">
                                   {formatMoney(row.cheapest_price_usd)}
                                 </td>
-                                <td className="px-4 py-3 text-sky-300">
+                                <td className="px-4 py-3 text-blue-600">
                                   {savings !== null && savings > 0
                                     ? formatMoney(savings)
                                     : '-'}
@@ -1472,7 +1534,7 @@ export default function Home() {
                                       href={row.deal_url}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="font-bold text-sky-300 transition hover:text-sky-200"
+                                      className="font-semibold text-blue-600 transition hover:text-blue-500"
                                     >
                                       Open
                                     </a>
@@ -1510,6 +1572,7 @@ export default function Home() {
                     `${summary?.successful_observations ?? validPrices.length}`,
                   ],
                   ['Failed', `${summary?.failed_observations ?? 0}`],
+                  ['Departure Day Filter', selectedWeekdayLabel],
                   ['Displayed After Filters', `${validPrices.length}`],
                 ]}
               />
@@ -1560,17 +1623,17 @@ function DealHero({
       : null;
 
   return (
-    <section className="relative overflow-hidden rounded-[2rem] border border-emerald-400/20 bg-gradient-to-br from-emerald-950/80 via-slate-900 to-slate-950 p-6 shadow-2xl md:p-8">
-      <div className="absolute right-0 top-0 h-48 w-48 rounded-full bg-emerald-400/10 blur-3xl" />
+    <section className="relative overflow-hidden rounded-[28px] border border-white/80 bg-white/75 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl md:p-8">
+      <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#34c759] via-[#007aff] to-[#ff9f0a]" />
       <div className="relative">
         <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-start">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-sm font-bold text-emerald-200">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-700">
               <Sparkles size={17} />
               {consumerAdvice.headline}
             </div>
 
-            <h2 className="mt-5 text-3xl font-black md:text-5xl">
+            <h2 className="mt-5 text-3xl font-semibold tracking-tight text-slate-950 md:text-5xl">
               {bestWindow
                 ? `${formatLongDate(bestWindow.depart_date)} → ${formatLongDate(
                     bestWindow.return_date
@@ -1578,19 +1641,19 @@ function DealHero({
                 : 'No best window yet'}
             </h2>
 
-            <p className="mt-4 max-w-2xl text-slate-300">
+            <p className="mt-4 max-w-2xl text-slate-600">
               {consumerAdvice.detail}
             </p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 text-left lg:min-w-[260px]">
-            <p className="text-sm font-bold uppercase tracking-[0.2em] text-slate-400">
+          <div className="rounded-[22px] border border-slate-200 bg-slate-50/85 p-5 text-left lg:min-w-[260px]">
+            <p className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500">
               Best Price
             </p>
-            <p className="mt-2 text-5xl font-black text-emerald-300">
+            <p className="mt-2 text-5xl font-semibold tracking-tight text-emerald-600">
               {formatMoney(bestWindow?.cheapest_price_usd)}
             </p>
-            <p className="mt-3 text-sm text-slate-400">
+            <p className="mt-3 text-sm text-slate-500">
               {savings !== null && savings > 0
                 ? `${formatMoney(savings)} below average`
                 : 'Compare against more scans'}
@@ -1624,21 +1687,21 @@ function DealCard({
   savings: number | null;
 }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-slate-950/80 p-5 transition hover:border-sky-400/40 hover:bg-slate-950">
+    <div className="rounded-[22px] border border-slate-200 bg-white/85 p-5 shadow-sm transition hover:border-blue-200 hover:shadow-md">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-500">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
             Option #{rank}
           </p>
-          <h3 className="mt-2 text-lg font-black">
+          <h3 className="mt-2 text-lg font-semibold text-slate-950">
             {formatLongDate(row.depart_date)}
           </h3>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-slate-500">
             Return {formatLongDate(row.return_date)}
           </p>
         </div>
 
-        <p className="rounded-2xl bg-emerald-400/10 px-4 py-2 text-xl font-black text-emerald-300">
+        <p className="rounded-full bg-emerald-50 px-4 py-2 text-xl font-semibold text-emerald-600">
           {formatMoney(row.cheapest_price_usd)}
         </p>
       </div>
@@ -1668,7 +1731,7 @@ function DealCard({
           href={row.deal_url}
           target="_blank"
           rel="noreferrer"
-          className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-sky-400/30 bg-sky-400/10 px-4 py-2 text-sm font-black text-sky-200 transition hover:bg-sky-400/20"
+          className="mt-4 inline-flex w-full items-center justify-center rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-600 transition hover:bg-blue-100"
         >
           Open Deal
         </a>
@@ -1677,27 +1740,178 @@ function DealCard({
   );
 }
 
-function InputField({
+function formatAirportOption(airport: Airport) {
+  const city = airport.city ? `${airport.city}, ` : '';
+  return `${airport.code} - ${city}${airport.country}`;
+}
+
+function getAirportScannerText(airport: Airport) {
+  const name = airport.name || airport.city || airport.code;
+  return `${name} ${airport.code}`;
+}
+
+function AirportAutocomplete({
   label,
-  value,
-  onChange,
+  selected,
+  onSelect,
   placeholder,
 }: {
   label: string;
-  value: string;
-  onChange: (value: string) => void;
+  selected: Airport | null;
+  onSelect: (airport: Airport | null) => void;
   placeholder: string;
 }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<Record<string, number | string>>(
+    {}
+  );
+
+  useEffect(() => {
+    setQuery(selected ? selected.code : '');
+  }, [selected]);
+
+  function syncMenuPosition() {
+    const input = inputRef.current;
+    if (!input) return;
+
+    const rect = input.getBoundingClientRect();
+    const viewportPadding = 16;
+    const preferredWidth = Math.max(rect.width, 360);
+    const availableWidth = window.innerWidth - rect.left - viewportPadding;
+
+    setMenuStyle({
+      left: Math.max(viewportPadding, rect.left),
+      top: rect.bottom + 8,
+      width: Math.min(preferredWidth, availableWidth),
+      maxHeight: Math.max(220, window.innerHeight - rect.bottom - 24),
+    });
+  }
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    syncMenuPosition();
+    window.addEventListener('resize', syncMenuPosition);
+    window.addEventListener('scroll', syncMenuPosition, true);
+
+    return () => {
+      window.removeEventListener('resize', syncMenuPosition);
+      window.removeEventListener('scroll', syncMenuPosition, true);
+    };
+  }, [isOpen, query]);
+
+  const matches = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized || selected) return [];
+
+    return airports
+      .filter((airport) => {
+        const haystack = [
+          airport.code,
+          airport.name,
+          airport.city,
+          airport.country,
+          airport.type,
+        ]
+          .join(' ')
+          .toLowerCase();
+
+        return haystack.includes(normalized);
+      })
+      .sort((a, b) => {
+        const upper = query.trim().toUpperCase();
+        const aCodeMatch = a.code.startsWith(upper) ? 0 : 1;
+        const bCodeMatch = b.code.startsWith(upper) ? 0 : 1;
+        const aScheduled = a.scheduled ? 0 : 1;
+        const bScheduled = b.scheduled ? 0 : 1;
+
+        return (
+          aCodeMatch - bCodeMatch ||
+          aScheduled - bScheduled ||
+          a.code.localeCompare(b.code)
+        );
+      })
+      .slice(0, 10);
+  }, [query, selected]);
+
+  function updateQuery(value: string) {
+    setQuery(value);
+    setIsOpen(true);
+    window.requestAnimationFrame(syncMenuPosition);
+    onSelect(null);
+  }
+
+  function chooseAirport(airport: Airport) {
+    onSelect(airport);
+    setIsOpen(false);
+  }
+
   return (
-    <label className="block">
-      <span className="text-sm font-semibold text-slate-300">{label}</span>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value.toUpperCase())}
-        placeholder={placeholder}
-        className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-sky-400"
-      />
-    </label>
+    <div className="relative">
+      <label className="block">
+        <span className="text-sm font-semibold text-slate-600">{label}</span>
+        <input
+          value={query}
+          ref={inputRef}
+          onChange={(e) => updateQuery(e.target.value)}
+          onFocus={() => {
+            setIsOpen(true);
+            window.requestAnimationFrame(syncMenuPosition);
+          }}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && matches[0]) {
+              event.preventDefault();
+              chooseAirport(matches[0]);
+            }
+          }}
+          placeholder={placeholder}
+          className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-[#007aff] focus:ring-4 focus:ring-blue-500/10"
+        />
+      </label>
+
+      {selected && (
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className="absolute right-3 top-[38px] rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+          aria-label={`Clear ${label}`}
+        >
+          <X size={16} />
+        </button>
+      )}
+
+      {isOpen && matches.length > 0 && (
+        <div
+          style={menuStyle}
+          className="fixed z-[9999] overflow-auto rounded-[18px] border border-slate-200 bg-white p-1 shadow-[0_18px_45px_rgba(15,23,42,0.14)]"
+        >
+          {matches.map((airport) => (
+            <button
+              key={airport.code}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseAirport(airport)}
+              className="block w-full rounded-[14px] px-3 py-3 text-left transition hover:bg-slate-50"
+            >
+              <span className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-slate-950">
+                  {airport.name}
+                </span>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-600">
+                  {airport.code}
+                </span>
+              </span>
+              <span className="mt-1 block text-xs text-slate-500">
+                {formatAirportOption(airport)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1716,13 +1930,13 @@ function NumberField({
 }) {
   return (
     <label className="block">
-      <span className="text-sm font-semibold text-slate-300">{label}</span>
+      <span className="text-sm font-semibold text-slate-600">{label}</span>
       <input
         type="number"
         value={value}
         min={min}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 font-semibold text-white outline-none transition focus:border-sky-400"
+        className="mt-2 w-full rounded-[14px] border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-950 outline-none transition focus:border-[#007aff] focus:ring-4 focus:ring-blue-500/10"
       />
       {helper && (
         <span className="mt-1 block text-xs text-slate-500">{helper}</span>
@@ -1744,12 +1958,12 @@ function SelectField({
 }) {
   return (
     <label className="block min-w-[180px]">
-      <span className="text-sm font-semibold text-slate-300">{label}</span>
+      <span className="text-sm font-semibold text-slate-600">{label}</span>
       <div className="relative mt-2">
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 pr-10 font-semibold text-white outline-none transition focus:border-sky-400"
+          className="w-full appearance-none rounded-[14px] border border-slate-200 bg-white px-4 py-3 pr-10 font-semibold text-slate-950 outline-none transition focus:border-[#007aff] focus:ring-4 focus:ring-blue-500/10"
         >
           {options.map((option) => (
             <option key={option.value} value={option.value}>
@@ -1759,7 +1973,7 @@ function SelectField({
         </select>
         <ChevronDown
           size={18}
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400"
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
         />
       </div>
     </label>
@@ -1780,19 +1994,19 @@ function StatCard({
   accent: 'emerald' | 'sky' | 'amber' | 'rose';
 }) {
   const styles = {
-    emerald: 'text-emerald-300 bg-emerald-400/10 border-emerald-400/20',
-    sky: 'text-sky-300 bg-sky-400/10 border-sky-400/20',
-    amber: 'text-amber-300 bg-amber-400/10 border-amber-400/20',
-    rose: 'text-rose-300 bg-rose-400/10 border-rose-400/20',
+    emerald: 'text-emerald-600 bg-emerald-50 border-emerald-100',
+    sky: 'text-blue-600 bg-blue-50 border-blue-100',
+    amber: 'text-amber-600 bg-amber-50 border-amber-100',
+    rose: 'text-red-600 bg-red-50 border-red-100',
   };
 
   return (
-    <div className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-5 shadow-2xl">
+    <div className="rounded-[24px] border border-white/80 bg-white/70 p-5 shadow-[0_14px_40px_rgba(15,23,42,0.07)] backdrop-blur-2xl">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-slate-400">{label}</p>
-        <div className={`rounded-2xl border p-2 ${styles[accent]}`}>{icon}</div>
+        <p className="text-sm font-semibold text-slate-500">{label}</p>
+        <div className={`rounded-[14px] border p-2 ${styles[accent]}`}>{icon}</div>
       </div>
-      <p className="mt-4 text-3xl font-black">{value}</p>
+      <p className="mt-4 text-3xl font-semibold tracking-tight text-slate-950">{value}</p>
       <p className="mt-1 text-sm text-slate-500">{sublabel}</p>
     </div>
   );
@@ -1808,13 +2022,13 @@ function ChartCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-6 shadow-2xl">
+    <section className="rounded-[28px] border border-white/80 bg-white/70 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black">{title}</h2>
-          <p className="mt-1 text-sm leading-6 text-slate-400">{description}</p>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-950">{title}</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">{description}</p>
         </div>
-        <BarChart3 className="text-slate-500" />
+        <BarChart3 className="text-slate-400" />
       </div>
       {children}
     </section>
@@ -1829,16 +2043,16 @@ function InfoPanel({
   rows: [string, string][];
 }) {
   return (
-    <section className="rounded-[2rem] border border-white/10 bg-slate-900/80 p-6 shadow-2xl">
-      <h2 className="text-xl font-black">{title}</h2>
+    <section className="rounded-[28px] border border-white/80 bg-white/70 p-6 shadow-[0_18px_60px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
+      <h2 className="text-xl font-semibold tracking-tight text-slate-950">{title}</h2>
       <div className="mt-5 space-y-3">
         {rows.map(([label, value]) => (
           <div
             key={label}
-            className="flex items-start justify-between gap-4 border-b border-white/10 pb-3 last:border-0 last:pb-0"
+            className="flex items-start justify-between gap-4 border-b border-slate-200/80 pb-3 last:border-0 last:pb-0"
           >
-            <p className="text-sm text-slate-400">{label}</p>
-            <p className="max-w-[60%] text-right text-sm font-bold text-slate-100">
+            <p className="text-sm text-slate-500">{label}</p>
+            <p className="max-w-[60%] text-right text-sm font-semibold text-slate-900">
               {value}
             </p>
           </div>
@@ -1856,11 +2070,11 @@ function MiniMetric({
   value: string | number;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.15em] text-slate-500">
+    <div className="rounded-[18px] border border-slate-200 bg-slate-50/85 p-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.13em] text-slate-500">
         {label}
       </p>
-      <p className="mt-2 font-black text-slate-100">{value}</p>
+      <p className="mt-2 font-semibold text-slate-950">{value}</p>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Flight Scanner',
-  description: 'MSP to HNL price scanner dashboard',
+  description: 'Airport fare scanner dashboard',
 };
 
 export default function RootLayout({
