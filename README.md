@@ -231,16 +231,45 @@ This is intentionally heuristic. It is not a guarantee that a fare is the best p
 
 ## Getting started
 
-### 1. Clone the repository
+### Quickstart
+
+From a fresh clone on macOS or Linux:
+
+```bash
+git clone https://github.com/JonathanParaschou/FlightOrFlight.git
+cd FlightOrFlight
+bash scripts/setup.sh
+bash scripts/dev.sh
+```
+
+Then open:
+
+```txt
+http://localhost:4000
+```
+
+The API runs at:
+
+```txt
+http://127.0.0.1:8000
+```
+
+The setup script creates `.venv`, installs Python packages, installs the Chromium browser Playwright needs, and installs frontend packages.
+
+---
+
+### Manual setup
+
+Use this path if you prefer to run each piece yourself.
+
+#### 1. Clone the repository
 
 ```bash
 git clone https://github.com/JonathanParaschou/FlightOrFlight.git
 cd FlightOrFlight
 ```
 
----
-
-### 2. Install Python dependencies
+#### 2. Install Python dependencies
 
 Create and activate a virtual environment:
 
@@ -274,7 +303,7 @@ playwright install
 
 ---
 
-### 3. Start the backend
+#### 3. Start the backend
 
 The frontend expects the API to run on:
 
@@ -285,18 +314,17 @@ http://127.0.0.1:8000
 Start the FastAPI server:
 
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn api:app --reload --port 8000
 ```
-
-If your API entry file has a different name, replace `main:app` with the correct module path.
 
 ---
 
-### 4. Start the frontend
+#### 4. Start the frontend
 
 Install frontend dependencies:
 
 ```bash
+cd web
 npm install
 ```
 
@@ -309,10 +337,30 @@ npm run dev
 Then open:
 
 ```txt
-http://localhost:3000
+http://localhost:4000
 ```
 
 ---
+
+## Local development commands
+
+```bash
+# Install everything needed for local development
+bash scripts/setup.sh
+
+# Run FastAPI and Next.js together
+bash scripts/dev.sh
+
+# Run only the API
+source .venv/bin/activate
+uvicorn api:app --reload --port 8000
+
+# Run only the web app
+cd web
+npm run dev
+```
+
+The dashboard expects the backend at `http://127.0.0.1:8000`. The backend allows browser requests from `http://localhost:4000` and `http://127.0.0.1:4000`.
 
 ## Running a scan
 

@@ -1,8 +1,10 @@
 .env
+.venv/
 __pycache__/
 venv/
 web/node_modules/
 web/.next/
 web/.env.local
+web/tsconfig.tsbuildinfo
 flight_scanner_debug/
 flight_prices.db
